@@ -1,0 +1,31 @@
+\usepackage{gridauto}
+\GridAutoSetup{\baselineskip}
+
+% отключает GridAuto в \chapter
+\makeatletter
+\AddToHook{cmd/chapter/before}{\begin{gridautoff}}
+\AddToHook{cmd/@chapter/after}{\end{gridautoff}}
+\AddToHook{cmd/@schapter/after}{\end{gridautoff}}
+\makeatother
+%-----
+
+
+%	QUOTATION ENVIRONMENT FORMAT появился begin{gridautoff}\end{gridautoff}
+\renewenvironment{quotation}
+{\begin{gridautoff}\par\leftskip=1em\vskip.5\onelineskip\em\normalfont\small}
+{\par\vskip.5\onelineskip\end{gridautoff}
+}
+%-------
+
+%W/O обойти уродства \Large = \large+\scaletext в конце
+\newcommand{\scaletext}[1]{{\addfontfeatures{Scale=1.2}#1}}
+
+\usepackage{titlesec} %оформление загловоков titlesec
+\titleformat{\section}{\filcenter\normalfont\large\scshape\headingfont\scaletext}{\thesection.}{1em}{}
+%------
+
+% W/O чтобы картинки не плыли
+% \usepackage{etoolbox}
+\BeforeBeginEnvironment{figure}{\begin{gridautoff}}
+\AfterEndEnvironment{figure}{\end{gridautoff}}
+%-----

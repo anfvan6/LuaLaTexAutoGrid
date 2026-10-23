@@ -1,0 +1,32 @@
+\usepackage{titlesec} %оформление загловоков titlesec
+
+%---------
+% Компенсация отступа после заголовка со сноской \vspace{-0.92\baselineskip}. обязательно в \titleformat добавить после {1em}{\ResetTitleFootnoteFlag}[\AdjustTitleFootnoteSpacing]
+
+% Отслеживание сносок в заголовках titlesec
+\usepackage{etoolbox}
+\newcount\TitleFootnoteFlag
+\TitleFootnoteFlag=0
+
+\makeatletter
+\pretocmd{\ttl@savefn}
+  {\global\TitleFootnoteFlag=1\relax}
+  {}
+  {\PackageError{mydocument}
+    {Could not patch titlesec footnote handler}
+    {Check the titlesec version.}}
+\makeatother
+
+% Сброс флага перед заголовком
+\newcommand{\ResetTitleFootnoteFlag}{%
+  \global\TitleFootnoteFlag=0\relax
+}
+
+% Компенсация отступа после заголовка со сноской
+\newcommand{\AdjustTitleFootnoteSpacing}{%
+  \ifnum\TitleFootnoteFlag=1
+    \global\TitleFootnoteFlag=0\relax
+    \vspace{-\baselineskip}%
+  \fi
+}
+%---------
