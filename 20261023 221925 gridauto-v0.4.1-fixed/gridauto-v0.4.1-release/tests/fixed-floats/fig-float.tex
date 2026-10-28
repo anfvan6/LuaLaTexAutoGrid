@@ -1,0 +1,16 @@
+\documentclass{article}
+\usepackage{gridauto}
+\GridAutoSetup{14pt}
+\begin{document}
+\section{Enabled}
+Text before off.
+\begin{gridautoff}
+\section{Disabled heading}
+Text within the disabled region, enough words to wrap and simulate regular content.
+\begin{itemize}\item One list item.\item Second item.\end{itemize}
+\begin{equation}x^2+y^2=z^2\end{equation}
+\begin{figure}[tb]\centering\rule{2cm}{1cm}\caption{Figure}\end{figure}
+\end{gridautoff}
+\section{After off}
+Paragraph after the disabled region with enough text for a few lines. The content is repeated to make the layout meaningful and consistent.
+\end{document}

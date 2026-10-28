@@ -1,0 +1,501 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{gridauto}[2026/10/23 v0.4.1 Lua helper syntax fix]
+
+% This package is a controlled, best-effort grid helper for standard
+% article/report/book documents. It requires LuaLaTeX and returntogrid.
+% It is not a universal page-output replacement; see the limitations below.
+
+\RequirePackage{iftex}
+\ifLuaTeX\else
+  \PackageError{gridauto}{LuaLaTeX is required}{Compile this document with LuaLaTeX.}
+\fi
+
+\newif\ifGridAutoDebug
+\GridAutoDebugfalse
+\DeclareOption{debug}{\GridAutoDebugtrue}
+\ProcessOptions\relax
+
+% Source-aware, bounded positional solver.
+% A source/dependency signature prevents an old .aux file from being mistaken
+% for the current document after editing a main or included source, style,
+% bibliography, data file, or local image. During the first run after a change,
+% gridauto ignores stale positional corrections and refreshes positions. It
+% then iterates up to pass 5 and freezes its own skips on pass 6. The saturated
+% counter does not change the .aux on later passes.
+\newcount\GridAutoRunNumber
+\def\GridAutoPreviousRun{0}
+\def\GridAutoPreviousSignature{uninitialized}
+\def\GridAutoCurrentSignature{uninitialized}
+\def\GridAutoFinalSignature{uninitialized}
+\newif\ifGridAutoSourceChanged
+\GridAutoSourceChangedtrue
+\GridAutoRunNumber=0
+
+% The Lua helper is a companion file (kept separate to avoid TeX tokenization
+% interfering with Lua parsing). Both files must be discoverable by Kpathsea.
+\newif\ifGridAutoSignatureHelperFound
+\IfFileExists{gridauto-signature.lua}{\GridAutoSignatureHelperFoundtrue}{\GridAutoSignatureHelperFoundfalse}
+\ifGridAutoSignatureHelperFound
+  \directlua{dofile(kpse.find_file("gridauto-signature.lua"))}
+  \directlua{gridauto_sig.settexmacro("GridAutoCurrentSignature")}
+\else
+  \PackageError{gridauto}{Missing companion file gridauto-signature.lua}{Place gridauto-signature.lua beside gridauto.sty or install both files in the same TeX directory.}
+  \def\GridAutoCurrentSignature{missing-helper}
+\fi
+
+\AtBeginDocument{%
+  \ifx\GridAutoPreviousSignature\GridAutoCurrentSignature
+    \global\GridAutoSourceChangedfalse
+    \GridAutoRunNumber=\GridAutoPreviousRun\relax
+  \else
+    \global\GridAutoSourceChangedtrue
+    \GridAutoRunNumber=0\relax
+  \fi
+  \ifnum\GridAutoRunNumber<6\relax
+    \advance\GridAutoRunNumber by 1\relax
+  \fi
+}
+\AtEndDocument{%
+  % Recompute after all inputs have been seen so a first clean build and a
+  % changed include file share the same signature on the following run.
+  \ifGridAutoSignatureHelperFound
+    \directlua{gridauto_sig.settexmacro("GridAutoFinalSignature")}%
+  \else
+    \global\let\GridAutoFinalSignature\GridAutoCurrentSignature
+  \fi
+  \immediate\write\@auxout{\string\gdef\string\GridAutoPreviousRun{\the\GridAutoRunNumber}}%
+  \immediate\write\@auxout{\string\gdef\string\GridAutoPreviousSignature{\GridAutoFinalSignature}}%
+}
+
+\RequirePackage{etoolbox}
+\RequirePackage{amsmath}
+\RequirePackage{enumitem}
+\RequirePackage{titlesec}
+\RequirePackage{caption}
+\RequirePackage{float}
+\RequirePackage{returntogrid}
+
+% Local on/off state. It is deliberately changed locally (not globally),
+% so ordinary TeX groups and the gridautoff environment restore it for free.
+\newif\ifGridAutoEnabled
+\GridAutoEnabledtrue
+
+\newlength{\GridStep}
+\setlength{\GridStep}{14pt}
+\newif\ifGridAutoPending
+\newif\ifGridAutoBusy
+\newif\ifGridAutoHeadingBodyPending
+\newif\ifGridAutoHeadingCaptureAllowed
+\newif\ifGridAutoHeadingCorrectionApplied
+\newif\ifGridAutoInChapterFormatter
+\newif\ifGridAutoFreezeWarned
+\GridAutoFreezeWarnedfalse
+\newcommand{\GridAutoWarnFrozen}{%
+  \ifGridAutoFreezeWarned\else
+    \global\GridAutoFreezeWarnedtrue
+    \PackageWarningNoLine{gridauto}{A positional correction was still changing after five passes; its previous value has been frozen to prevent an endless rerun cycle. Exact grid phase for the affected block may need manual inspection}%
+  \fi
+}
+\GridAutoPendingfalse
+\GridAutoBusyfalse
+\GridAutoHeadingBodyPendingfalse
+\GridAutoHeadingCaptureAllowedfalse
+\GridAutoHeadingCorrectionAppliedfalse
+\GridAutoInChapterFormatterfalse
+\newcount\GridAutoHeadingSerial
+\GridAutoHeadingSerial=0
+\newdimen\GridAutoHeadingAppliedSkip
+\GridAutoHeadingAppliedSkip=0pt
+\def\GridAutoCurrentBodyLabel{gridauto@headingbody@0}
+\def\GridAutoCurrentHeadLabel{gridauto@headinghead@0}
+
+% Capture the pre-grid vertical settings that gridauto changes. These are
+% restored only within a GridAutoOff scope; exiting the scope restores grid
+% settings automatically through TeX grouping.
+\newskip\GridAutoOriginalTopSkip
+\GridAutoOriginalTopSkip=\topskip
+\newskip\GridAutoOriginalParSkip
+\GridAutoOriginalParSkip=\parskip
+\newskip\GridAutoOriginalLineSkip
+\GridAutoOriginalLineSkip=\lineskip
+\newdimen\GridAutoOriginalLineSkipLimit
+\GridAutoOriginalLineSkipLimit=\lineskiplimit
+\newskip\GridAutoOriginalAboveDisplaySkip
+\GridAutoOriginalAboveDisplaySkip=\abovedisplayskip
+\newskip\GridAutoOriginalBelowDisplaySkip
+\GridAutoOriginalBelowDisplaySkip=\belowdisplayskip
+\newskip\GridAutoOriginalAboveDisplayShortSkip
+\GridAutoOriginalAboveDisplayShortSkip=\abovedisplayshortskip
+\newskip\GridAutoOriginalBelowDisplayShortSkip
+\GridAutoOriginalBelowDisplayShortSkip=\belowdisplayshortskip
+\newskip\GridAutoOriginalJot
+\GridAutoOriginalJot=\jot
+\newskip\GridAutoOriginalCaptionSkip
+\GridAutoOriginalCaptionSkip=\abovecaptionskip
+
+\makeatletter
+\let\GridAutoOriginalTextBottom\@textbottom
+\makeatother
+
+% Public setup command: use in the preamble, e.g. \GridAutoSetup{14pt}.
+\newcommand{\GridAutoSetup}[1]{%
+  \setlength{\GridStep}{#1}%
+  \setlength{\topskip}{\GridStep}%
+  \setlength{\parskip}{0pt}%
+  \raggedbottom
+  \returntogridsetup{step=\GridStep,offset=\topskip}%
+}
+\GridAutoSetup{14pt}
+
+% A disabled block must not leave a new pending correction behind.
+\newcommand{\GridAutoMark}{%
+  \ifGridAutoEnabled
+    \global\GridAutoPendingtrue
+  \fi
+}
+
+\makeatletter
+% Keep each normal paragraph's baseline interval on an integer multiple
+% of the grid. While locally disabled, leave the font's natural baseline.
+\AddToHook{selectfont}{%
+  \ifGridAutoEnabled
+    \dimen@=\f@size pt\relax
+    \ifdim\dimen@>\GridStep
+      \baselineskip=2\GridStep
+    \else
+      \baselineskip=\GridStep
+    \fi
+    \lineskip=0pt
+    \lineskiplimit=-1000pt
+  \fi
+}
+
+% At the first paragraph after a heading, write a positional mark. Its phase
+% correction is moved before the heading, rather than appended after it. The
+% ordinary block correction remains active for non-heading blocks.
+\AddToHook{para/begin}{%
+  \ifGridAutoEnabled
+    \ifGridAutoHeadingBodyPending
+      \ifinner
+        % Grid correction inside boxes is unsafe; abandon this heading target.
+        \global\GridAutoHeadingBodyPendingfalse
+        \global\GridAutoPendingfalse
+      \else
+        \global\GridAutoHeadingBodyPendingfalse
+        \expandafter\zsavepos\expandafter{\GridAutoCurrentBodyLabel}%
+        % The heading's first body paragraph is handled by the pre-heading
+        % phase lock. Suppress a competing post-block correction even on the
+        % first compilation, before previous-run positions are available.
+        \global\GridAutoPendingfalse
+      \fi
+    \fi
+    \ifGridAutoPending
+      \ifinner
+        % Keep the flag pending; a correction inside a box is unsafe.
+      \else
+        \global\GridAutoPendingfalse
+        \ifGridAutoBusy\else
+          \global\GridAutoBusytrue
+          \returntogrid
+          \global\GridAutoBusyfalse
+        \fi
+      \fi
+    \fi
+  \fi
+}
+
+% Keep ordinary figure/table placement deterministic in both grid-enabled and
+% locally-disabled scopes. GridAutoOff disables grid corrections, not float
+% placement policy; allowing a float to migrate across pages inside a local-off
+% group can change the page of every later heading and make fixed-point
+% correction oscillate. Use figure* / table* only when multi-column floats are
+% intended; those continue to produce the existing warning.
+\let\GridAutoOriginalXfloat\@xfloat
+\def\@xfloat#1[#2]{%
+  \ifstrequal{#1}{figure}{\GridAutoOriginalXfloat#1[H]}{%
+    \ifstrequal{#1}{table}{\GridAutoOriginalXfloat#1[H]}{%
+      \GridAutoOriginalXfloat#1[#2]}%
+  }%
+}
+% \GridAutoOff is intended for use inside a TeX group or gridautoff.
+% The grid-enable flag and all locally restored settings return automatically
+% when the enclosing scope ends. Existing pending corrections are preserved.
+\newcommand{\GridAutoOff}{%
+  \GridAutoEnabledfalse
+  % Revert the current font to its natural baseline while selectfont hooks
+  % are bypassed. LaTeX's usual values for line collision handling are restored.
+  \@ifundefined{f@baselineskip}{}{\baselineskip=\f@baselineskip\relax}%
+  \lineskip=\GridAutoOriginalLineSkip
+  \lineskiplimit=\GridAutoOriginalLineSkipLimit
+  \topskip=\GridAutoOriginalTopSkip
+  \parskip=\GridAutoOriginalParSkip
+  \abovedisplayskip=\GridAutoOriginalAboveDisplaySkip
+  \belowdisplayskip=\GridAutoOriginalBelowDisplaySkip
+  \abovedisplayshortskip=\GridAutoOriginalAboveDisplayShortSkip
+  \belowdisplayshortskip=\GridAutoOriginalBelowDisplayShortSkip
+  \jot=\GridAutoOriginalJot
+  \abovecaptionskip=\GridAutoOriginalCaptionSkip
+  \let\@textbottom\GridAutoOriginalTextBottom
+  \let\enit@@list\GridAutoOriginalListSpacing
+  % Restore the caption package's spacing option locally; its font setting is
+  % intentionally retained because it is typographic, not grid correction.
+  \captionsetup{skip=\GridAutoOriginalCaptionSkip}%
+}
+
+\newenvironment{gridautoff}{\GridAutoOff}{}
+
+\makeatother
+
+% Textual block spacing. Save the current values immediately before replacing
+% them, so GridAutoOff can locally restore the non-grid values.
+\AtBeginDocument{%
+  \global\GridAutoOriginalAboveDisplaySkip=\abovedisplayskip
+  \global\GridAutoOriginalBelowDisplaySkip=\belowdisplayskip
+  \global\GridAutoOriginalAboveDisplayShortSkip=\abovedisplayshortskip
+  \global\GridAutoOriginalBelowDisplayShortSkip=\belowdisplayshortskip
+  \global\GridAutoOriginalJot=\jot
+  \setlength{\parskip}{0pt}%
+  \setlength{\abovedisplayskip}{\GridStep}%
+  \setlength{\belowdisplayskip}{\GridStep}%
+  \setlength{\abovedisplayshortskip}{\GridStep}%
+  \setlength{\belowdisplayshortskip}{\GridStep}%
+  \setlength{\jot}{\GridStep}%
+}
+
+% Calculate the required correction from the previous run's first body-line
+% position. The value is stored during preparation but inserted only after
+% titlesec has applied its ordinary before-space, preventing \addvspace from
+% swallowing or replacing the grid correction. Chapter correction is inserted
+% after the chapter top-space and before the title body.
+\makeatletter
+\ExplSyntaxOn
+\int_new:N \l__gridauto_candidate_skip_int
+\int_new:N \l__gridauto_old_skip_int
+\cs_new_protected:Npn \gridauto_apply_heading_correction:nn #1#2
+  {
+    \ifGridAutoSourceChanged
+      % Do not consume positional coordinates or stored skips from a different
+      % source revision. Write a zero correction and refresh all marks first.
+      \int_zero:N \l__ufgrid_vskip_int
+      \tl_set:Nx \l_tmpc_tl {#1-vskip}
+      \exp_args:NV \zref@labelbyprops \l_tmpc_tl {ufgridvskip}
+    \else
+      \int_compare:nT { \zposy{#1} != 0 }
+        {
+          \int_compare:nTF
+            { \zref@extractdefault{#1}{abspage}{0}
+              = \zref@extractdefault{#2}{abspage}{-1} }
+            {
+              % Iterate using the previous run's measurements. On pass 6,
+              % freeze to the exact skip applied on pass 5 so oscillating page
+              % breaks cannot keep changing this heading's correction.
+              \int_set:Nn \l__gridauto_candidate_skip_int
+                { \gridauto_original_calculate_vskip:n {#1} }
+              \int_set:Nn \l__gridauto_old_skip_int
+                { \zref@extractdefault{#1-vskip}{ufgridvskip}{0} }
+              \int_compare:nTF { \GridAutoRunNumber < 6 }
+                { \int_set_eq:NN \l__ufgrid_vskip_int \l__gridauto_candidate_skip_int }
+                {
+                  \int_set_eq:NN \l__ufgrid_vskip_int \l__gridauto_old_skip_int
+                  \int_compare:nT { \l__gridauto_candidate_skip_int != \l__gridauto_old_skip_int }
+                    { \GridAutoWarnFrozen }
+                }
+              \tl_set:Nx \l_tmpc_tl {#1-vskip}
+              \exp_args:NV \zref@labelbyprops \l_tmpc_tl {ufgridvskip}
+              \global\GridAutoHeadingCorrectionAppliedtrue
+              \global\GridAutoHeadingAppliedSkip=\l__ufgrid_vskip_int sp\relax
+            }
+            {
+              % Across a page boundary, do not solve against an unrelated page
+              % origin. Retain the last applied skip; the new page's topskip is
+              % its independent grid origin.
+              \int_set:Nn \l__ufgrid_vskip_int
+                { \zref@extractdefault{#1-vskip}{ufgridvskip}{0} }
+              \int_compare:nT { \l__ufgrid_vskip_int > 0 }
+                {
+                  \global\GridAutoHeadingCorrectionAppliedtrue
+                  \global\GridAutoHeadingAppliedSkip=\l__ufgrid_vskip_int sp\relax
+                }
+              \tl_set:Nx \l_tmpc_tl {#1-vskip}
+              \exp_args:NV \zref@labelbyprops \l_tmpc_tl {ufgridvskip}
+            }
+        }
+    \fi
+  }
+\cs_new_protected:Npn \GridAutoApplyHeadingCorrection
+  { \exp_args:NVV \gridauto_apply_heading_correction:nn \GridAutoCurrentBodyLabel \GridAutoCurrentHeadLabel }
+
+% Freeze ordinary post-block snaps as well, otherwise returntogrid could keep
+% changing its own positions after heading corrections have been frozen.
+\cs_new_eq:NN \gridauto_original_calculate_vskip:n \__ufgrid_calculate_vskip:n
+\cs_set:Npn \__ufgrid_calculate_vskip:n #1
+  {
+    \ifGridAutoSourceChanged
+      \int_zero:N \l__ufgrid_vskip_int
+    \else
+      \int_compare:nTF { \GridAutoRunNumber < 6 }
+        { \gridauto_original_calculate_vskip:n {#1} }
+        { \zref@extractdefault{#1-vskip}{ufgridvskip}{0} }
+    \fi
+  }
+\ExplSyntaxOff
+
+\newcommand{\GridAutoHeadingPrepare}{%
+  \global\GridAutoHeadingBodyPendingfalse
+  \global\GridAutoHeadingCaptureAllowedfalse
+  \global\GridAutoHeadingCorrectionAppliedfalse
+  \global\GridAutoHeadingAppliedSkip=0pt
+  \ifGridAutoEnabled
+    \ifinner
+      \global\GridAutoPendingfalse
+    \else
+      \par
+      \global\GridAutoPendingfalse
+      \global\advance\GridAutoHeadingSerial by 1
+      \xdef\GridAutoCurrentBodyLabel{gridauto@headingbody@\the\GridAutoHeadingSerial}%
+      \xdef\GridAutoCurrentHeadLabel{gridauto@headinghead@\the\GridAutoHeadingSerial}%
+      \GridAutoApplyHeadingCorrection%
+      \global\GridAutoHeadingCaptureAllowedtrue
+    \fi
+  \fi
+}
+\newcommand{\GridAutoInsertHeadingCorrection}{%
+  \ifGridAutoEnabled
+    \ifGridAutoHeadingCaptureAllowed
+      \ifGridAutoHeadingCorrectionApplied
+        \ifdim\GridAutoHeadingAppliedSkip>0pt
+          \vspace*{\GridAutoHeadingAppliedSkip}%
+        \fi
+      \fi
+    \fi
+  \fi
+}
+\newcommand{\GridAutoHeadingComplete}{%
+  \ifGridAutoEnabled
+    \ifGridAutoHeadingCaptureAllowed
+      \global\GridAutoHeadingBodyPendingtrue
+      \expandafter\zsavepos\expandafter{\GridAutoCurrentHeadLabel}%
+    \fi
+  \fi
+  \global\GridAutoHeadingCaptureAllowedfalse
+}
+
+% \part ends its own page in the standard classes; a correction here would
+% be lost at its page break, so discard any pending heading target instead.
+\newcommand{\GridAutoPartBoundary}{%
+  \global\GridAutoHeadingBodyPendingfalse
+  \global\GridAutoPendingfalse
+  \global\GridAutoHeadingCaptureAllowedfalse
+}
+\@ifundefined{part}{}{\AddToHook{cmd/part/before}{\GridAutoPartBoundary}}
+% Chapter lifecycle hooks are installed on titlesec's shared top-heading
+% formatter below, not on \@chapter or \@makechapterhead. Those class
+% internals can be bypassed/wrapped by titlesec and patching them can suppress
+% a user-defined \titleformat{\chapter} body.
+% Ordinary display headings need one preparation before their title and one
+% completion at titlesec's \ttl@finmarks. Run-in headings (paragraph and
+% subparagraph) are intentionally not phase-corrected independently: their
+% title and body share the same paragraph baseline, and a separate target would
+% incorrectly capture the following paragraph.
+\AddToHook{cmd/section/before}{\GridAutoHeadingPrepare}
+\AddToHook{cmd/subsection/before}{\GridAutoHeadingPrepare}
+\AddToHook{cmd/subsubsection/before}{\GridAutoHeadingPrepare}
+
+% titlesec's command-after hooks can interfere with its internal parser. Use
+% its shared end-of-title hook for ordinary headings instead.
+\apptocmd{\ttl@finmarks}{%
+  \ifGridAutoInChapterFormatter\else\GridAutoHeadingComplete\fi
+}{}{}
+% Insert the correction AFTER titlesec's native before-space. This is crucial:
+% a vertical skip placed before \addvspace can be merged with the native glue.
+\patchcmd{\ttl@straight@ii}
+  {\ttl@select{#6}{#1}{#2}{#7}}
+  {\GridAutoInsertHeadingCorrection\ttl@select{#6}{#1}{#2}{#7}}
+  {}{\PackageWarningNoLine{gridauto}{Could not patch titlesec straight headings; pre-heading grid correction may be unavailable}}
+% Chapter titles use a separate top-heading formatter.
+\@ifundefined{ttl@mkchap@i}{}{%
+  \pretocmd{\ttl@mkchap@i}{%
+  \global\GridAutoInChapterFormattertrue\GridAutoHeadingPrepare
+}{}%
+    {\PackageWarningNoLine{gridauto}{Could not prepare grid correction for titlesec chapter headings}}%
+  \patchcmd{\ttl@mkchap@i}
+    {\vspace*{\@tempskipa}}
+    {\vspace*{\@tempskipa}\GridAutoInsertHeadingCorrection}
+    {}{\PackageWarningNoLine{gridauto}{Could not patch titlesec chapter spacing; chapter grid correction may be unavailable}}%
+  \apptocmd{\ttl@mkchap@i}{%
+  \GridAutoHeadingComplete\global\GridAutoInChapterFormatterfalse
+}{}%
+    {\PackageWarningNoLine{gridauto}{Could not finish grid correction for titlesec chapter headings}}%
+}
+% If titlesec is keeping the document class's original chapter format (the
+% default report/book chapter heading), it uses \ttl@save@mkchap rather than
+% \ttl@mkchap@i. Insert the same correction after that format's built-in top
+% space. The correction is additional to the class-defined spacing.
+\@ifundefined{ttl@save@mkchap}{}{%
+  \pretocmd{\ttl@save@mkchap}{\GridAutoHeadingPrepare}{}%
+    {\PackageWarningNoLine{gridauto}{Could not prepare the original chapter formatter}}%
+  \patchcmd{\ttl@save@mkchap}
+    {\vspace*{50\p@ }}
+    {\vspace*{50\p@ }\GridAutoInsertHeadingCorrection}
+    {}{\PackageWarningNoLine{gridauto}{Could not patch the original chapter formatter; chapter grid correction may be unavailable}}%
+  \apptocmd{\ttl@save@mkchap}{\GridAutoHeadingComplete}{}%
+    {\PackageWarningNoLine{gridauto}{Could not finish the original chapter formatter}}%
+}
+% Sectional headings are prepared only by titlesec formatters above, preventing duplicate serials and stale position labels.
+\makeatother
+
+% Lists have no non-grid vertical glue while grid mode is active.
+\makeatletter
+\let\GridAutoOriginalListSpacing\enit@@list
+\makeatother
+\setlist{topsep=0pt,partopsep=0pt,itemsep=0pt,parsep=0pt}
+\captionsetup{font=small,skip=\GridStep}
+
+% Automatic re-snap after common standard blocks. No body commands required.
+\AtEndEnvironment{equation}{\GridAutoMark}
+\AtEndEnvironment{equation*}{\GridAutoMark}
+\AtEndEnvironment{align}{\GridAutoMark}
+\AtEndEnvironment{align*}{\GridAutoMark}
+\AtEndEnvironment{gather}{\GridAutoMark}
+\AtEndEnvironment{gather*}{\GridAutoMark}
+\AtEndEnvironment{multline}{\GridAutoMark}
+\AtEndEnvironment{multline*}{\GridAutoMark}
+\AtEndEnvironment{flalign}{\GridAutoMark}
+\AtEndEnvironment{flalign*}{\GridAutoMark}
+\AtEndEnvironment{alignat}{\GridAutoMark}
+\AtEndEnvironment{alignat*}{\GridAutoMark}
+\AtEndEnvironment{displaymath}{\GridAutoMark}
+\AtEndEnvironment{itemize}{\GridAutoMark}
+\AtEndEnvironment{enumerate}{\GridAutoMark}
+\AtEndEnvironment{description}{\GridAutoMark}
+\AtEndEnvironment{quote}{\GridAutoMark}
+\AtEndEnvironment{quotation}{\GridAutoMark}
+\AtEndEnvironment{center}{\GridAutoMark}
+\AtEndEnvironment{flushleft}{\GridAutoMark}
+\AtEndEnvironment{flushright}{\GridAutoMark}
+\AtEndEnvironment{figure}{\GridAutoMark}
+\AtEndEnvironment{table}{\GridAutoMark}
+\AtEndEnvironment{figure*}{%
+  \ifGridAutoEnabled
+    \PackageWarningNoLine{gridauto}{figure* is still a floating object; strict grid alignment around it is not guaranteed}%
+  \fi
+}
+\AtEndEnvironment{table*}{%
+  \ifGridAutoEnabled
+    \PackageWarningNoLine{gridauto}{table* is still a floating object; strict grid alignment around it is not guaranteed}%
+  \fi
+}
+
+% Also catch the standard \[ ... \] display-math form.
+\makeatletter
+\apptocmd{\]}{\GridAutoMark}{}{}
+\makeatother
+
+% Optional red grid overlay for checking the rendered pages: load with [debug].
+\ifGridAutoDebug
+  \RequirePackage{tikz}
+  \RequirePackage{eso-pic}
+  \AtBeginDocument{\AddToShipoutPictureBG{\AtTextUpperLeft{\showdebugpagegrid}}}
+\fi
+
+\endinput

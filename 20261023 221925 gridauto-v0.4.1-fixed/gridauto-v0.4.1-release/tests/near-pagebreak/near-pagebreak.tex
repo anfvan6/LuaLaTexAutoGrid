@@ -1,0 +1,16 @@
+\documentclass{article}
+\usepackage{gridauto}
+\GridAutoSetup{14pt}
+\begin{document}
+\section{Opening}
+\newcount\n \n=0
+\loop\ifnum\n<25
+This repeated filler text places a heading close to the bottom of the page while keeping the test deterministic.\par
+\advance\n by 1
+\repeat
+\begin{equation} x^2+y^2=z^2 \end{equation}
+\section{Heading near page boundary}
+The first paragraph after this heading checks whether the solver handles a page transition without alternating corrections.
+\section{After boundary}
+Further body text.
+\end{document}
