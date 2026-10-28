@@ -1,0 +1,13 @@
+\documentclass[12pt]{report}
+\usepackage{titlesec}
+\newcommand{\headingfont}{\sffamily}
+\titleformat{\chapter}[display]{\filcenter\normalfont\headingfont\Large\bfseries\scshape}{\chaptertitlename.\ \thechapter}{1em}{}
+\titlespacing{\chapter}{0pt}{0pt}{0pt}
+\usepackage{gridauto}
+\GridAutoSetup{14pt}
+\begin{document}
+\chapter{A long chapter heading to inspect the selected formatting}
+Some text after the chapter heading. This needs enough words to wrap and make the grid adjustment observable. Some more words so there are several baseline lines in this paragraph.
+\chapter*{Unnumbered chapter heading}
+More body text under the unnumbered heading.
+\end{document}

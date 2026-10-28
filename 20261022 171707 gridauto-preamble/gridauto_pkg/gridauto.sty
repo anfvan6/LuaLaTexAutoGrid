@@ -1,0 +1,146 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{gridauto}[2026/10/22 v0.1 preamble-only baseline-grid helper]
+
+% This package is a controlled, best-effort grid helper for standard
+% article/report/book documents. It requires LuaLaTeX and returntogrid.
+% It is not a universal page-output replacement; see the limitations below.
+
+\RequirePackage{iftex}
+\ifLuaTeX\else
+  \PackageError{gridauto}{LuaLaTeX is required}{Compile this document with LuaLaTeX.}
+\fi
+
+\newif\ifGridAutoDebug
+\GridAutoDebugfalse
+\DeclareOption{debug}{\GridAutoDebugtrue}
+\ProcessOptions\relax
+
+\RequirePackage{etoolbox}
+\RequirePackage{amsmath}
+\RequirePackage{enumitem}
+\RequirePackage{titlesec}
+\RequirePackage{caption}
+\RequirePackage{float}
+\RequirePackage{returntogrid}
+
+\newlength{\GridStep}
+\setlength{\GridStep}{14pt}
+\newif\ifGridAutoPending
+\newif\ifGridAutoBusy
+\GridAutoPendingfalse
+\GridAutoBusyfalse
+
+% Public setup command: use in the preamble, e.g. \GridAutoSetup{14pt}.
+\newcommand{\GridAutoSetup}[1]{%
+  \setlength{\GridStep}{#1}%
+  \setlength{\topskip}{\GridStep}%
+  \setlength{\parskip}{0pt}%
+  \raggedbottom
+  \returntogridsetup{step=\GridStep,offset=\topskip}%
+}
+\GridAutoSetup{14pt}
+
+\newcommand{\GridAutoMark}{\global\GridAutoPendingtrue}
+
+\makeatletter
+% Keep each normal paragraph's baseline interval on an integer multiple
+% of the grid. Very large font sizes use two grid steps to avoid collisions.
+\AddToHook{selectfont}{%
+  \dimen@=\f@size pt\relax
+  \ifdim\dimen@>\GridStep
+    \baselineskip=2\GridStep
+  \else
+    \baselineskip=\GridStep
+  \fi
+  \lineskip=0pt
+  \lineskiplimit=-1000pt
+}
+
+% If a standard block ended, snap the following main-text paragraph to the
+% grid. Do not insert a correction inside an inner box/minipage.
+\AddToHook{para/begin}{%
+  \ifGridAutoPending
+    \ifinner
+      % Keep the flag pending; a correction inside a box is unsafe.
+    \else
+      \global\GridAutoPendingfalse
+      \ifGridAutoBusy\else
+        \global\GridAutoBusytrue
+        \returntogrid
+        \global\GridAutoBusyfalse
+      \fi
+    \fi
+  \fi
+}
+
+% Force ordinary figure/table environments to remain in source order.
+% This is necessary because a relocated top float can break the grid.
+% Double-column floats are not forced and produce warnings below.
+\let\GridAutoOriginalXfloat\@xfloat
+\def\@xfloat#1[#2]{%
+  \ifstrequal{#1}{figure}{\GridAutoOriginalXfloat#1[H]}{%
+    \ifstrequal{#1}{table}{\GridAutoOriginalXfloat#1[H]}{%
+      \GridAutoOriginalXfloat#1[#2]}%
+  }%
+}
+\makeatother
+
+% Textual block spacing.
+\AtBeginDocument{%
+  \setlength{\parskip}{0pt}%
+  \setlength{\abovedisplayskip}{\GridStep}%
+  \setlength{\belowdisplayskip}{\GridStep}%
+  \setlength{\abovedisplayshortskip}{\GridStep}%
+  \setlength{\belowdisplayshortskip}{\GridStep}%
+  \setlength{\jot}{\GridStep}%
+}
+
+% Preserve the document class heading fonts; make only their vertical spacing grid-based.
+\titlespacing*{\section}{0pt}{\GridStep}{\GridStep}
+\titlespacing*{\subsection}{0pt}{\GridStep}{\GridStep}
+\titlespacing*{\subsubsection}{0pt}{\GridStep}{\GridStep}
+
+% Lists have no non-grid vertical glue; line leading remains a grid multiple.
+\setlist{topsep=0pt,partopsep=0pt,itemsep=0pt,parsep=0pt}
+\captionsetup{font=small,skip=\GridStep}
+
+% Automatic re-snap after common standard blocks. No body commands required.
+\AtEndEnvironment{equation}{\GridAutoMark}
+\AtEndEnvironment{equation*}{\GridAutoMark}
+\AtEndEnvironment{align}{\GridAutoMark}
+\AtEndEnvironment{align*}{\GridAutoMark}
+\AtEndEnvironment{gather}{\GridAutoMark}
+\AtEndEnvironment{gather*}{\GridAutoMark}
+\AtEndEnvironment{multline}{\GridAutoMark}
+\AtEndEnvironment{multline*}{\GridAutoMark}
+\AtEndEnvironment{flalign}{\GridAutoMark}
+\AtEndEnvironment{flalign*}{\GridAutoMark}
+\AtEndEnvironment{alignat}{\GridAutoMark}
+\AtEndEnvironment{alignat*}{\GridAutoMark}
+\AtEndEnvironment{displaymath}{\GridAutoMark}
+\AtEndEnvironment{itemize}{\GridAutoMark}
+\AtEndEnvironment{enumerate}{\GridAutoMark}
+\AtEndEnvironment{description}{\GridAutoMark}
+\AtEndEnvironment{quote}{\GridAutoMark}
+\AtEndEnvironment{quotation}{\GridAutoMark}
+\AtEndEnvironment{center}{\GridAutoMark}
+\AtEndEnvironment{flushleft}{\GridAutoMark}
+\AtEndEnvironment{flushright}{\GridAutoMark}
+\AtEndEnvironment{figure}{\GridAutoMark}
+\AtEndEnvironment{table}{\GridAutoMark}
+\AtEndEnvironment{figure*}{\PackageWarningNoLine{gridauto}{figure* is still a floating object; strict grid alignment around it is not guaranteed}}
+\AtEndEnvironment{table*}{\PackageWarningNoLine{gridauto}{table* is still a floating object; strict grid alignment around it is not guaranteed}}
+
+% Also catch the standard \[ ... \] display-math form.
+\makeatletter
+\apptocmd{\]}{\GridAutoMark}{}{}
+\makeatother
+
+% Optional red grid overlay for checking the rendered pages: load with [debug].
+\ifGridAutoDebug
+  \RequirePackage{tikz}
+  \RequirePackage{eso-pic}
+  \AtBeginDocument{\AddToShipoutPictureBG{\AtTextUpperLeft{\showdebugpagegrid}}}
+\fi
+
+\endinput

@@ -1,0 +1,14 @@
+\documentclass{report}
+\usepackage{titlesec}
+\newcommand{\headingfont}{\sffamily}
+\titleformat{\chapter}[display]{\filcenter\normalfont\headingfont\Large\bfseries\scshape}{\chaptertitlename.\ \thechapter}{1em}{}
+\titlespacing{\chapter}{0pt}{0pt}{0pt}
+\usepackage{gridauto}
+\GridAutoSetup{14pt}
+\begin{document}
+\chapter{A long chapter title used to verify custom titlesec formatting remains intact}
+\label{ch:custom}
+The main text begins here and should follow the baseline grid after the chapter heading. This paragraph wraps over several lines so that output positions can be compared across runs. Chapter reference: \ref{ch:custom}.
+\section{A section after chapter}
+Text after section.
+\end{document}

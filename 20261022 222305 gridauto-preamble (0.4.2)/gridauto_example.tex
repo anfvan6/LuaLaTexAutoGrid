@@ -1,0 +1,45 @@
+\documentclass{report}
+
+\usepackage{gridauto}
+\GridAutoSetup{14pt}
+
+% Настройка: {уровень}{число строк сверху}{число строк снизу}.
+% Значения независимы; 0 означает отсутствие запрошенного отступа.
+\GridAutoHeadingSpacing{chapter}{4}{3}
+\GridAutoHeadingSpacing{section}{1}{1}
+\GridAutoHeadingSpacing{subsection}{2}{0}
+\GridAutoHeadingSpacing{subsubsection}{1}{1}
+\GridAutoHeadingBefore{paragraph}{0}
+\GridAutoHeadingAfter{paragraph}{1}
+\GridAutoHeadingSpacing{subparagraph}{0}{0}
+
+\begin{document}
+
+\chapter{Grid-based headings}
+This is the text following a chapter heading. The grid step is fourteen points.
+
+\section{Section}
+This is the text following the section heading.
+
+\subsection{Subsection}
+This is the text following the subsection heading.
+
+\subsubsection{Subsubsection}
+This is the text following the subsubsection heading.
+
+\paragraph{Paragraph heading}
+The paragraph text follows the heading.
+
+\subparagraph{Subparagraph heading}
+This is the text following the subparagraph heading.
+
+{\GridAutoOff
+The grid is locally disabled inside this group. After the closing brace, the previous settings are restored.
+}
+
+\begin{gridautoff}
+\section{Grid temporarily disabled}
+This section is typeset while grid automation is locally disabled.
+\end{gridautoff}
+
+\end{document}

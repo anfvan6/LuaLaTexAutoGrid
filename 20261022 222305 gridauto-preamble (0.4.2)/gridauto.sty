@@ -1,0 +1,466 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{gridauto}[2026/10/22 v0.4.2 stable heading grid correction]
+
+% This package is a controlled, best-effort grid helper for standard
+% article/report/book documents. It requires LuaLaTeX and returntogrid.
+% It is not a universal page-output replacement; see the limitations below.
+
+\RequirePackage{iftex}
+\ifLuaTeX\else
+  \PackageError{gridauto}{LuaLaTeX is required}{Compile this document with LuaLaTeX.}
+\fi
+
+\newif\ifGridAutoDebug
+\GridAutoDebugfalse
+\DeclareOption{debug}{\GridAutoDebugtrue}
+\ProcessOptions\relax
+
+\RequirePackage{etoolbox}
+\RequirePackage{amsmath}
+\RequirePackage{enumitem}
+\RequirePackage{titlesec}
+\RequirePackage{caption}
+\RequirePackage{float}
+\RequirePackage{returntogrid}
+\RequirePackage{pdftexcmds}
+
+% Save pre-grid settings so a scoped disable can locally restore the normal
+% baseline, display skips, title spacing and page-bottom behaviour.
+\newlength{\GridAutoNaturalBaseline}
+\newlength{\GridAutoOriginalTopskip}
+\newlength{\GridAutoOriginalParskip}
+\newskip\GridAutoOriginalAboveDisplaySkip
+\newskip\GridAutoOriginalBelowDisplaySkip
+\newskip\GridAutoOriginalAboveDisplayShortSkip
+\newskip\GridAutoOriginalBelowDisplayShortSkip
+\newskip\GridAutoOriginalAboveCaptionSkip
+\newskip\GridAutoOriginalBelowCaptionSkip
+\newlength{\GridAutoOriginalJot}
+\setlength{\GridAutoNaturalBaseline}{12pt}
+\setlength{\GridAutoOriginalTopskip}{\topskip}
+\setlength{\GridAutoOriginalParskip}{\parskip}
+\GridAutoOriginalAboveDisplaySkip=\abovedisplayskip
+\GridAutoOriginalBelowDisplaySkip=\belowdisplayskip
+\GridAutoOriginalAboveDisplayShortSkip=\abovedisplayshortskip
+\GridAutoOriginalBelowDisplayShortSkip=\belowdisplayshortskip
+\GridAutoOriginalAboveCaptionSkip=\abovecaptionskip
+\GridAutoOriginalBelowCaptionSkip=\belowcaptionskip
+\setlength{\GridAutoOriginalJot}{\jot}
+
+\makeatletter
+\let\GridAutoOriginalTextBottom\@textbottom
+\@ifundefined{ttls@section}{}{\let\GridAutoOriginalSectionSpacing\ttls@section}
+\@ifundefined{ttls@subsection}{}{\let\GridAutoOriginalSubsectionSpacing\ttls@subsection}
+\@ifundefined{ttls@subsubsection}{}{\let\GridAutoOriginalSubsubsectionSpacing\ttls@subsubsection}
+\@ifundefined{ttls@paragraph}{}{\let\GridAutoOriginalParagraphSpacing\ttls@paragraph}
+\@ifundefined{ttls@subparagraph}{}{\let\GridAutoOriginalSubparagraphSpacing\ttls@subparagraph}
+\@ifundefined{ttlf@paragraph}{}{\let\GridAutoOriginalParagraphFormat\ttlf@paragraph}
+\@ifundefined{ttlf@subparagraph}{}{\let\GridAutoOriginalSubparagraphFormat\ttlf@subparagraph}
+\@ifundefined{enit@@list}{\let\GridAutoOriginalListSpacing\relax}{\let\GridAutoOriginalListSpacing\enit@@list}
+\makeatother
+
+\newlength{\GridStep}
+\setlength{\GridStep}{14pt}
+\newif\ifGridAutoEnabled
+\newif\ifGridAutoPending
+\newif\ifGridAutoBusy
+\newif\ifGridAutoHeadingActive
+\newif\ifGridAutoHeadingNeedsCorrection
+\newif\ifGridAutoInsideHeading
+\GridAutoEnabledtrue
+\GridAutoPendingfalse
+\GridAutoBusyfalse
+\GridAutoHeadingActivefalse
+\GridAutoHeadingNeedsCorrectionfalse
+\GridAutoInsideHeadingfalse
+
+\makeatletter
+% Stable labels are derived from heading level, current heading number, and
+% the literal title token list. Thus an old .aux position can never be applied
+% to a different heading just because another heading was inserted earlier.
+% A per-key occurrence suffix distinguishes repeated starred/unnumbered titles.
+\newcommand{\GridAutoHeadingLabel}{gridauto-heading-unassigned}
+\newcommand{\GridAutoHeadingSave}{\returntogrid[save=\GridAutoHeadingLabel]}
+\newcommand{\GridAutoMakeHeadingLabel}[2]{%
+  \begingroup
+    \edef\GridAutoHeadingHash{\pdf@mdfivesum{\detokenize{#1}/\csname the#1\endcsname/\detokenize{#2}}}%
+    \@ifundefined{GridAutoHeadingOccurrence@\GridAutoHeadingHash}{%
+      \expandafter\gdef\csname GridAutoHeadingOccurrence@\GridAutoHeadingHash\endcsname{0}%
+    }{}%
+    \expandafter\xdef\csname GridAutoHeadingOccurrence@\GridAutoHeadingHash\endcsname{%
+      \number\numexpr\csname GridAutoHeadingOccurrence@\GridAutoHeadingHash\endcsname+1\relax}%
+    \xdef\GridAutoHeadingLabel{gridauto-heading-\GridAutoHeadingHash-\csname GridAutoHeadingOccurrence@\GridAutoHeadingHash\endcsname}%
+  \endgroup
+}
+
+% The before/after values are non-negative integer counts of \GridStep.
+% They are evaluated at typesetting time, so changing \GridAutoSetup also
+% changes all configured heading spaces.
+\newcommand{\GridAutoBeforeDim}[1]{%
+  \csname GridAutoBeforeLines@#1\endcsname\GridStep}
+\newcommand{\GridAutoAfterDim}[1]{%
+  \csname GridAutoAfterLines@#1\endcsname\GridStep}
+
+\newcommand{\GridAutoBeforeHeading}{%
+  \ifGridAutoEnabled
+    \global\GridAutoPendingfalse
+    % Remember the state BEFORE titlesec processes this heading. If headings
+    % are consecutive, the previous heading's after-space is the only gap.
+    \if@nobreak
+      \global\GridAutoHeadingNeedsCorrectionfalse
+    \else
+      \global\GridAutoHeadingNeedsCorrectiontrue
+    \fi
+    % Do not correct here: titlesec has not yet inserted its configured
+    % before-space. The correction is deferred to the ttl@select hook below.
+    \global\GridAutoHeadingActivetrue
+  \fi
+}
+
+% Public setup command: use in the preamble, e.g. \GridAutoSetup{14pt}.
+\newcommand{\GridAutoSetup}[1]{%
+  \setlength{\GridStep}{#1}%
+  \setlength{\topskip}{\GridStep}%
+  \setlength{\parskip}{0pt}%
+  \raggedbottom
+  \returntogridsetup{step=\GridStep,offset=\topskip}%
+}
+\GridAutoSetup{14pt}
+
+% Public heading-spacing API.
+% Usage: \GridAutoHeadingSpacing{section}{1}{2}
+%         \GridAutoHeadingBefore{section}{0}
+%         \GridAutoHeadingAfter{subsection}{2}
+\def\GridAutoStoreLineCount#1#2{%
+  \ifnum\numexpr#2\relax<0
+    \PackageError{gridauto}{Heading spacing must be non-negative}{Use an integer number of grid lines, including 0.}%
+    \expandafter\def\csname #1\endcsname{0}%
+  \else
+    \expandafter\edef\csname #1\endcsname{\number\numexpr#2\relax}%
+  \fi
+}
+
+\def\GridAutoApply@chapter{}% Chapter spacing is applied in the class macro.
+\def\GridAutoApply@section{%
+  \titlespacing*{\section}{0pt}{\GridAutoBeforeDim{section}}{\GridAutoAfterDim{section}}}
+\def\GridAutoApply@subsection{%
+  \titlespacing*{\subsection}{0pt}{\GridAutoBeforeDim{subsection}}{\GridAutoAfterDim{subsection}}}
+\def\GridAutoApply@subsubsection{%
+  \titlespacing*{\subsubsection}{0pt}{\GridAutoBeforeDim{subsubsection}}{\GridAutoAfterDim{subsubsection}}}
+\def\GridAutoApply@paragraph{%
+  \titlespacing*{\paragraph}{0pt}{\GridAutoBeforeDim{paragraph}}{\GridAutoAfterDim{paragraph}}}
+\def\GridAutoApply@subparagraph{%
+  \titlespacing*{\subparagraph}{\parindent}{\GridAutoBeforeDim{subparagraph}}{\GridAutoAfterDim{subparagraph}}}
+
+\newcommand{\GridAutoHeadingSpacing}[3]{%
+  \@ifundefined{GridAutoBeforeLines@#1}{%
+    \PackageError{gridauto}{Unknown heading level `#1'}%
+      {Allowed values: chapter, section, subsection, subsubsection, paragraph, subparagraph.}%
+  }{%
+    \GridAutoStoreLineCount{GridAutoBeforeLines@#1}{#2}%
+    \GridAutoStoreLineCount{GridAutoAfterLines@#1}{#3}%
+    \GridAutoApplyHeadingSpacing{#1}%
+  }%
+}
+\newcommand{\GridAutoApplyHeadingSpacing}[1]{%
+  \@ifundefined{GridAutoApply@#1}{%
+    \PackageError{gridauto}{Unknown heading level `#1'}%
+      {Allowed values: chapter, section, subsection, subsubsection, paragraph, subparagraph.}%
+  }{\csname GridAutoApply@#1\endcsname}%
+}
+\newcommand{\GridAutoHeadingBefore}[2]{%
+  \@ifundefined{GridAutoAfterLines@#1}{%
+    \PackageError{gridauto}{Unknown heading level `#1'}{Check the heading level name.}%
+  }{\GridAutoHeadingSpacing{#1}{#2}{\csname GridAutoAfterLines@#1\endcsname}}%
+}
+\newcommand{\GridAutoHeadingAfter}[2]{%
+  \@ifundefined{GridAutoBeforeLines@#1}{%
+    \PackageError{gridauto}{Unknown heading level `#1'}{Check the heading level name.}%
+  }{\GridAutoHeadingSpacing{#1}{\csname GridAutoBeforeLines@#1\endcsname}{#2}}%
+}
+\let\GridAutoSetHeadingSpacing\GridAutoHeadingSpacing
+% Define all supported keys before the default spacing configuration is run.
+\def\GridAutoBeforeLines@chapter{0}\def\GridAutoAfterLines@chapter{0}%
+\def\GridAutoBeforeLines@section{0}\def\GridAutoAfterLines@section{0}%
+\def\GridAutoBeforeLines@subsection{0}\def\GridAutoAfterLines@subsection{0}%
+\def\GridAutoBeforeLines@subsubsection{0}\def\GridAutoAfterLines@subsubsection{0}%
+\def\GridAutoBeforeLines@paragraph{0}\def\GridAutoAfterLines@paragraph{0}%
+\def\GridAutoBeforeLines@subparagraph{0}\def\GridAutoAfterLines@subparagraph{0}%
+\makeatother
+
+\newcommand{\GridAutoMark}{%
+  \ifGridAutoEnabled\global\GridAutoPendingtrue\fi
+}
+
+\makeatletter
+
+% Disable the grid locally. Use in a brace group or through the gridautoff
+% environment; assignments intentionally remain local except stale pending
+% corrections, which are cleared so they cannot leak past the excluded block.
+\newcommand{\GridAutoOff}{%
+  \GridAutoEnabledfalse
+  \global\GridAutoPendingfalse
+  \global\GridAutoHeadingActivefalse
+  \global\GridAutoHeadingNeedsCorrectionfalse
+  \baselineskip=\GridAutoNaturalBaseline\relax
+  \topskip=\GridAutoOriginalTopskip\relax
+  \parskip=\GridAutoOriginalParskip\relax
+  \abovedisplayskip=\GridAutoOriginalAboveDisplaySkip
+  \belowdisplayskip=\GridAutoOriginalBelowDisplaySkip
+  \abovedisplayshortskip=\GridAutoOriginalAboveDisplayShortSkip
+  \belowdisplayshortskip=\GridAutoOriginalBelowDisplayShortSkip
+  \abovecaptionskip=\GridAutoOriginalAboveCaptionSkip
+  \belowcaptionskip=\GridAutoOriginalBelowCaptionSkip
+  \jot=\GridAutoOriginalJot
+  \let\@textbottom\GridAutoOriginalTextBottom
+  \@ifundefined{GridAutoOriginalSectionSpacing}{}{%
+    \let\ttls@section\GridAutoOriginalSectionSpacing}%
+  \@ifundefined{GridAutoOriginalSubsectionSpacing}{}{%
+    \let\ttls@subsection\GridAutoOriginalSubsectionSpacing}%
+  \@ifundefined{GridAutoOriginalSubsubsectionSpacing}{}{%
+    \let\ttls@subsubsection\GridAutoOriginalSubsubsectionSpacing}%
+  \@ifundefined{GridAutoOriginalParagraphSpacing}{}{%
+    \let\ttls@paragraph\GridAutoOriginalParagraphSpacing}%
+  \@ifundefined{GridAutoOriginalSubparagraphSpacing}{}{%
+    \let\ttls@subparagraph\GridAutoOriginalSubparagraphSpacing}%
+  \@ifundefined{GridAutoOriginalParagraphFormat}{}{%
+    \let\ttlf@paragraph\GridAutoOriginalParagraphFormat}%
+  \@ifundefined{GridAutoOriginalSubparagraphFormat}{}{%
+    \let\ttlf@subparagraph\GridAutoOriginalSubparagraphFormat}%
+  \let\enit@@list\GridAutoOriginalListSpacing
+}
+\let\GridAutoDisable\GridAutoOff
+\newenvironment{gridautoff}{\GridAutoOff}{}
+
+% The heading title and level become available in titlesec's \ttl@straight@ii
+% before it inserts its normal before-space. Compute a stable key there and
+% apply the correction before the configured gap. The configured gap is an
+% integer multiple of the grid step, so it does not change the required phase.
+% Crucially, correction is not appended after titlesec's \\addvspace: doing so
+% interacts with vertical glue and can make the saved skip oscillate between runs.
+\@ifundefined{ttl@straight@ii}{}{%
+  \let\GridAutoOriginalStraightII\ttl@straight@ii
+  \def\ttl@straight@ii#1#2#3#4#5#6#7{%
+    \ifGridAutoHeadingActive
+      % The level and full title are available here, before titlesec inserts
+      % the before-space. Create the label now, but apply the correction later.
+      \GridAutoMakeHeadingLabel{#6}{#7}%
+    \fi
+    \GridAutoOriginalStraightII{#1}{#2}{#3}{#4}{#5}{#6}{#7}%
+  }%
+}
+
+% Preserve natural leading inside titlesec's title group. The position label is
+% saved at the first title baseline; the stable label was computed above.
+\@ifundefined{ttl@select}{}{%
+  \let\GridAutoOriginalTtlSelect\ttl@select
+  \patchcmd{\GridAutoOriginalTtlSelect}{\begingroup}%
+    {\begingroup\GridAutoInsideHeadingtrue}%
+    {}{\PackageWarning{gridauto}{Could not enable natural leading in headings}}%
+  \def\ttl@select#1#2#3#4{%
+    \ifGridAutoHeadingActive
+      % Apply the snap after titlesec has inserted its configured before-space,
+      % but before the title box. Thus it corrects the heading baseline, not
+      % the gap separately from titlesec's spacing logic.
+      \ifGridAutoHeadingNeedsCorrection
+        \edef\GridAutoRunCorrection{\noexpand\returntogrid[use=\GridAutoHeadingLabel]}%
+        \GridAutoRunCorrection
+      \fi
+      \GridAutoOriginalTtlSelect{#1}{#2}{#3}{\GridAutoHeadingSave#4}%
+      \global\GridAutoHeadingActivefalse
+      \global\GridAutoHeadingNeedsCorrectionfalse
+    \else
+      \GridAutoOriginalTtlSelect{#1}{#2}{#3}{#4}%
+    \fi
+  }%
+}
+
+% In-flow headings: include starred and unstarred forms automatically.
+\pretocmd{\section}{\GridAutoBeforeHeading}{}{\PackageWarning{gridauto}{Could not hook section}}
+\pretocmd{\subsection}{\GridAutoBeforeHeading}{}{\PackageWarning{gridauto}{Could not hook subsection}}
+\pretocmd{\subsubsection}{\GridAutoBeforeHeading}{}{\PackageWarning{gridauto}{Could not hook subsubsection}}
+\pretocmd{\paragraph}{\GridAutoBeforeHeading}{}{\PackageWarning{gridauto}{Could not hook paragraph}}
+\pretocmd{\subparagraph}{\GridAutoBeforeHeading}{}{\PackageWarning{gridauto}{Could not hook subparagraph}}
+
+% Page-opening chapter headings retain the document class's typography,
+% but their outer skips are expressed in grid lines. The original class spacing
+% is restored whenever gridautoff / \GridAutoOff is active.
+\@ifundefined{chapter}{}{%
+  \@ifundefined{ttl@save@mkchap}{}{%
+    \patchcmd{\ttl@save@mkchap}{\vspace*{50\p@}}%
+      {\ifGridAutoEnabled\vspace*{\GridAutoBeforeDim{chapter}}\else\vspace*{50\p@}\fi}%
+      {}{\PackageWarning{gridauto}{Could not patch numbered chapter top spacing}}%
+    \patchcmd{\ttl@save@mkchap}{\vskip 40\p@}%
+      {\ifGridAutoEnabled\vskip\GridAutoAfterDim{chapter}\else\vskip 40\p@\fi}%
+      {}{\PackageWarning{gridauto}{Could not patch numbered chapter bottom spacing}}%
+    \patchcmd{\ttl@save@mkchap}{\vskip 20\p@}%
+      {\ifGridAutoEnabled\vskip\GridStep\else\vskip 20\p@\fi}%
+      {}{\PackageWarning{gridauto}{Could not patch chapter label-title spacing}}%
+  }%
+  \@ifundefined{ttl@save@mkschap}{}{%
+    \patchcmd{\ttl@save@mkschap}{\vspace*{50\p@}}%
+      {\ifGridAutoEnabled\vspace*{\GridAutoBeforeDim{chapter}}\else\vspace*{50\p@}\fi}%
+      {}{\PackageWarning{gridauto}{Could not patch unnumbered chapter top spacing}}%
+    \patchcmd{\ttl@save@mkschap}{\vskip 40\p@}%
+      {\ifGridAutoEnabled\vskip\GridAutoAfterDim{chapter}\else\vskip 40\p@\fi}%
+      {}{\PackageWarning{gridauto}{Could not patch unnumbered chapter bottom spacing}}%
+  }%
+  \pretocmd{\chapter}{\global\GridAutoPendingfalse}{}{}%
+}
+\@ifundefined{part}{}{%
+  \pretocmd{\part}{\global\GridAutoPendingfalse}{}{}
+}
+
+% Keep ordinary text baselines on integer multiples of the grid. Large fonts
+% outside headings use two steps to avoid collisions; inside a titlesec heading
+% we preserve the font's natural leading (see the hook below).
+\AddToHook{selectfont}{%
+  % Capture the font's natural leading before applying the grid override.
+  \GridAutoNaturalBaseline=\baselineskip
+  \ifGridAutoEnabled
+    % Do not force enlarged title fonts such as \Large to 2*\GridStep.
+    % With a 14pt grid, \Large is typically 14.4pt, so the old size-based
+    % test changed its natural 18pt leading to 28pt, which looks like an
+    % extra blank line in wrapped headings. Keep natural leading in the
+    % title-formatting group; ordinary document text still follows the grid.
+    \ifGridAutoInsideHeading
+      % Leave the font's natural \baselineskip and line-spacing parameters.
+    \else
+      \dimen@=\f@size pt\relax
+      \ifdim\dimen@>\GridStep
+        \baselineskip=2\GridStep
+      \else
+        \baselineskip=\GridStep
+      \fi
+      \lineskip=0pt
+      \lineskiplimit=-1000pt
+    \fi
+  \fi
+}
+
+% If a standard block ended, snap the following main-text paragraph to the
+% grid. Do not insert a correction inside an inner box/minipage.
+\AddToHook{para/begin}{%
+  \ifGridAutoEnabled
+    \ifGridAutoPending
+      \ifinner
+        % Keep the flag pending; a correction inside a box is unsafe.
+      \else
+        \global\GridAutoPendingfalse
+        \ifGridAutoBusy\else
+          \global\GridAutoBusytrue
+          \returntogrid
+          \global\GridAutoBusyfalse
+        \fi
+      \fi
+    \fi
+  \fi
+}
+
+% Force ordinary figure/table environments to remain in source order.
+% This is necessary because a relocated top float can break the grid.
+% Double-column floats are not forced and produce warnings below.
+\let\GridAutoOriginalXfloat\@xfloat
+\def\@xfloat#1[#2]{%
+  \ifGridAutoEnabled
+    \ifstrequal{#1}{figure}{\GridAutoOriginalXfloat#1[H]}{%
+      \ifstrequal{#1}{table}{\GridAutoOriginalXfloat#1[H]}{%
+        \GridAutoOriginalXfloat#1[#2]}%
+    }%
+  \else
+    \GridAutoOriginalXfloat#1[#2]%
+  \fi
+}
+\makeatother
+
+% Textual block spacing.
+\AtBeginDocument{%
+  \setlength{\parskip}{0pt}%
+  \setlength{\abovedisplayskip}{\GridStep}%
+  \setlength{\belowdisplayskip}{\GridStep}%
+  \setlength{\abovedisplayshortskip}{\GridStep}%
+  \setlength{\belowdisplayshortskip}{\GridStep}%
+  \setlength{\jot}{\GridStep}%
+}
+
+% A paragraph and subparagraph need a vertical after-space to make the
+% configured "below" value meaningful, so render them as block headings
+% rather than the standard classes' run-in headings. Font and numbering remain
+% class-like; subparagraph keeps its traditional left indentation.
+\makeatletter
+\titleformat{\paragraph}[block]
+  {\normalfont\normalsize\bfseries}{\@seccntformat{paragraph}}{0pt}{}
+\titleformat{\subparagraph}[block]
+  {\normalfont\normalsize\bfseries}{\@seccntformat{subparagraph}}{0pt}{}
+\makeatother
+
+% In consecutive headings, use only the after-space of the preceding heading;
+% suppress the next heading's before-space. This guarantees no accumulation
+% (the documented titlesec `aftersep` behavior), including when the title
+% commands add penalties between their vertical skips.
+\makeatletter
+\let\ttl@titlespace\@gobble
+\makeatother
+
+% Default settings, expressed in line-grid units. All values may be zero.
+% Chapter defaults approximate the standard book/report chapter whitespace.
+\GridAutoHeadingSpacing{chapter}{4}{3}
+\GridAutoHeadingSpacing{section}{1}{1}
+\GridAutoHeadingSpacing{subsection}{1}{1}
+\GridAutoHeadingSpacing{subsubsection}{1}{1}
+\GridAutoHeadingSpacing{paragraph}{1}{0}
+\GridAutoHeadingSpacing{subparagraph}{1}{0}
+
+% Lists have no non-grid vertical glue; line leading remains a grid multiple.
+\setlist{topsep=0pt,partopsep=0pt,itemsep=0pt,parsep=0pt}
+% The caption gap follows the grid when enabled and returns to the document's
+% original gap while inside a gridautoff scope. Keep caption font untouched.
+\newcommand{\GridAutoCaptionSkip}{%
+  \ifGridAutoEnabled
+    \the\GridStep
+  \else
+    \the\GridAutoOriginalAboveCaptionSkip
+  \fi
+}
+\captionsetup{skip=\GridAutoCaptionSkip}
+
+% Automatic re-snap after common standard blocks. No body commands required.
+\AtEndEnvironment{equation}{\GridAutoMark}
+\AtEndEnvironment{equation*}{\GridAutoMark}
+\AtEndEnvironment{align}{\GridAutoMark}
+\AtEndEnvironment{align*}{\GridAutoMark}
+\AtEndEnvironment{gather}{\GridAutoMark}
+\AtEndEnvironment{gather*}{\GridAutoMark}
+\AtEndEnvironment{multline}{\GridAutoMark}
+\AtEndEnvironment{multline*}{\GridAutoMark}
+\AtEndEnvironment{flalign}{\GridAutoMark}
+\AtEndEnvironment{flalign*}{\GridAutoMark}
+\AtEndEnvironment{alignat}{\GridAutoMark}
+\AtEndEnvironment{alignat*}{\GridAutoMark}
+\AtEndEnvironment{displaymath}{\GridAutoMark}
+\AtEndEnvironment{itemize}{\GridAutoMark}
+\AtEndEnvironment{enumerate}{\GridAutoMark}
+\AtEndEnvironment{description}{\GridAutoMark}
+\AtEndEnvironment{quote}{\GridAutoMark}
+\AtEndEnvironment{quotation}{\GridAutoMark}
+\AtEndEnvironment{center}{\GridAutoMark}
+\AtEndEnvironment{flushleft}{\GridAutoMark}
+\AtEndEnvironment{flushright}{\GridAutoMark}
+\AtEndEnvironment{figure}{\GridAutoMark}
+\AtEndEnvironment{table}{\GridAutoMark}
+\AtEndEnvironment{figure*}{\PackageWarningNoLine{gridauto}{figure* is still a floating object; strict grid alignment around it is not guaranteed}}
+\AtEndEnvironment{table*}{\PackageWarningNoLine{gridauto}{table* is still a floating object; strict grid alignment around it is not guaranteed}}
+
+% Also catch the standard \[ ... \] display-math form.
+\makeatletter
+\apptocmd{\]}{\GridAutoMark}{}{}
+\makeatother
+
+% Optional red grid overlay for checking the rendered pages: load with [debug].
+\ifGridAutoDebug
+  \RequirePackage{tikz}
+  \RequirePackage{eso-pic}
+  \AtBeginDocument{\AddToShipoutPictureBG{\AtTextUpperLeft{\showdebugpagegrid}}}
+\fi
+
+\endinput

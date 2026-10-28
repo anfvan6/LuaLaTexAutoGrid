@@ -1,0 +1,22 @@
+\documentclass{article}
+\usepackage{titlesec}
+\titlespacing{\section}{0pt}{0pt}{0pt}
+\usepackage{gridauto}
+\GridAutoSetup{14pt}
+\begin{document}
+\section{Grid on}
+This paragraph is on the grid.
+{\GridAutoOff
+\section{Grid off in group}
+This paragraph is intentionally outside grid correction.
+\begin{equation}x^2+y^2=z^2\end{equation}
+}
+\section{Grid restored}
+This first line after a restored grid heading should align.
+\begin{gridautoff}
+\section{Grid off in environment}
+This paragraph has natural spacing.
+\end{gridautoff}
+\section{Grid restored after environment}
+This first line should again align.
+\end{document}

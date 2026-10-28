@@ -1,0 +1,13 @@
+\documentclass{article}
+\usepackage{gridauto}
+\GridAutoSetup{14pt}
+\usepackage{titlesec}
+% Also verify that spacing declarations AFTER gridauto are preserved.
+\titlespacing{\section}{0pt}{0pt}{0pt}
+\titlespacing{\subsection}{0pt}{0pt}{0pt}
+\titlespacing{\subsubsection}{0pt}{0pt}{0pt}
+\begin{document}
+\begin{equation}x^2+y^2=z^2\end{equation}
+\section{Zero spacing is respected}
+Text below heading.
+\end{document}

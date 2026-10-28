@@ -1,0 +1,10 @@
+test	first_clean_pass	pages	freeze_warning	extra_pass_label_warning	pdf_pixel_identical_after_extra_pass
+chapter-format	4	1	0	0	1
+fixed-floats	5	1	0	0	1
+localoff	6	2	0	0	1
+many-headings	6	4	0	0	1
+near-pagebreak	5	2	0	0	1
+two-column-float	4	3	0	0	1
+zero-spacing	6	2	0	0	1
+stale-dependency-change-clean	6	1	0	0	verified separately
+stale-dependency-change-existing-aux	6	1	0	0	verified separately

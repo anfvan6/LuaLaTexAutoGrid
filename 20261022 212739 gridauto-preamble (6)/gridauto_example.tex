@@ -1,0 +1,60 @@
+\documentclass{report}
+
+\usepackage{gridauto}
+\GridAutoSetup{14pt}
+
+% For each heading: {level}{number of grid lines above}{number below}.
+% All values are independent; use 0 for no requested gap.
+\GridAutoHeadingSpacing{chapter}{4}{3}
+\GridAutoHeadingSpacing{section}{1}{1}
+\GridAutoHeadingSpacing{subsection}{2}{0}
+\GridAutoHeadingSpacing{subsubsection}{1}{1}
+\GridAutoHeadingBefore{paragraph}{0}
+\GridAutoHeadingAfter{paragraph}{1}
+\GridAutoHeadingSpacing{subparagraph}{0}{0}
+
+% Disable grid correction for selected heading kinds only:
+% \GridAutoOff[chapter]
+% \GridAutoOff[section]
+% Re-enable a selected level with \GridAutoOn[section].
+% These switches can also be scoped in braces or in a surrounding environment.
+% An excluded title restores the class spacing and bypasses the grid baseline
+% override while the title itself is typeset. The first body paragraph after it
+% is automatically snapped back to the grid; no command in the document is needed.
+
+\begin{document}
+
+\chapter{Grid-based headings}
+This is the text following a chapter heading.
+
+\section{Section}
+This is the text following the section.
+
+\subsection{Subsection}
+This is the text following the subsection.
+
+% If this heading directly followed a section, only the section's bottom
+% spacing would be used. The two gaps are not added together.
+\subsubsection{Subsubsection}
+This is the text following the subsubsection.
+
+\paragraph{Paragraph heading}
+The paragraph text begins on the next line because paragraph and subparagraph
+are configured as block headings so their lower spacing can be vertical.
+
+\subparagraph{Subparagraph heading}
+This is the text following the subparagraph.
+
+{\GridAutoOff[subsection]
+\subsection{Only this subsection kind is excluded from grid automation}
+This level temporarily uses the class's original title spacing; the body paragraph
+after it is automatically returned to the grid, while other heading levels
+continue to use the grid.
+}
+
+\begin{gridautoff}
+\section{Grid temporarily disabled}
+This section uses the class's original heading spacing and paragraph style.
+\end{gridautoff}
+
+\end{document}

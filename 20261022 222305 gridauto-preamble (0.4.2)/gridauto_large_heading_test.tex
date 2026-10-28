@@ -1,0 +1,20 @@
+\documentclass[10pt]{article}
+\usepackage{gridauto}
+\GridAutoSetup{14pt}
+
+% Narrow text block causes section titles to wrap into several lines.
+\setlength{\textwidth}{270pt}
+\titleformat{\section}[block]
+  {\normalfont\Large\bfseries}
+  {\thesection}{0.7em}{}
+
+\begin{document}
+
+\section{A long heading that wraps over multiple lines and should not contain an extra blank line between the lines}
+The paragraph after the heading returns to the configured 14 pt grid. Its line
+spacing remains regular and does not inherit the natural leading of the title.
+
+\section{A second long heading to verify that the line spacing stays natural in multiple wrapped headings}
+Another paragraph following a wrapped heading.
+
+\end{document}

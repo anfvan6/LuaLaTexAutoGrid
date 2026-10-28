@@ -1,0 +1,47 @@
+\documentclass{article}
+\usepackage{gridauto}
+\GridAutoSetup{14pt}
+\begin{document}
+\section{Grid is enabled}
+This paragraph should use the grid baseline. It contains enough words to wrap over more than one line and show the spacing.
+
+\begin{equation}
+ a^2+b^2=c^2
+\end{equation}
+Paragraph after display math should return to grid alignment.
+
+{\GridAutoOff
+\section{Locally disabled in a group}
+This text is inside a local group with automatic grid correction switched off. It should use the font's natural baseline and native title spacing and list spacing.
+
+\begin{itemize}
+\item One list item with enough text to wrap onto another line and show natural line spacing.
+\item Second item.
+\end{itemize}
+\begin{equation}
+ x^2+y^2=z^2
+\end{equation}
+}
+
+\section{Grid restored after group}
+This paragraph should return to grid alignment after the disabled group.
+
+\begin{gridautoff}
+\section{Locally disabled in environment}
+This text is inside the gridautoff environment. Automatic grid correction is disabled here.
+\begin{enumerate}
+\item First item.
+\item Second item.
+\end{enumerate}
+\begin{equation}
+ E=mc^2
+\end{equation}
+\begin{figure}[tb]
+  \centering\rule{2cm}{1cm}
+  \caption{Caption inside disabled grid}
+\end{figure}
+\end{gridautoff}
+
+\section{Grid restored after environment}
+This paragraph should return to grid alignment after the environment.
+\end{document}
